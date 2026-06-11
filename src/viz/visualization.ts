@@ -279,18 +279,20 @@ export class Juggl extends Component implements IJuggl {
           }
         });
         this.viz.on('dragfree', (e) => {
-          if (this.activeLayout) {
-            this.activeLayout.stop();
-          }
-          // this.activeLayout = this.viz.layout(this.colaLayout()).start();
-          this.activeLayout.start();
           const node = e.target;
           node.lock();
-          this.activeLayout.one('layoutstop', (e) => {
-            if (!node.hasClass(CLASS_PINNED)) {
-              node.unlock();
-            }
-          });
+          // activeLayout can still be null if no layout has run yet.
+          if (this.activeLayout) {
+            this.activeLayout.stop();
+            this.activeLayout.start();
+            this.activeLayout.one('layoutstop', (e) => {
+              if (!node.hasClass(CLASS_PINNED)) {
+                node.unlock();
+              }
+            });
+          } else if (!node.hasClass(CLASS_PINNED)) {
+            node.unlock();
+          }
         });
         this.viz.on('cxttap', (e) => {
           // Thanks Liam for sharing how to do context menus
@@ -357,7 +359,7 @@ export class Juggl extends Component implements IJuggl {
       mdPreviewView.appendChild(mdPreviewSection);
 
 
-      await MarkdownRenderer.renderMarkdown(mdContent, mdPreviewSection, sourcePath, null );
+      await MarkdownRenderer.render(this.plugin.app, mdContent, mdPreviewSection, sourcePath, this);
 
       activeDocument.body.appendChild(newDiv);
       // @ts-ignore

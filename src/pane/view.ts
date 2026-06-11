@@ -20,8 +20,12 @@ export abstract class JugglPane extends ItemView {
           this.changeRef = null;
         }
         if (leaf) {
-          if (leaf.view.getViewType() === JUGGL_VIEW_TYPE) {
-            const activeViz = (leaf.view as JugglView).juggl;
+          // With deferred views (Obsidian 1.7.2+) the leaf can report the Juggl
+          // view type while its view isn't a loaded JugglView yet, so also check
+          // that the juggl instance actually exists.
+          const activeViz = leaf.view.getViewType() === JUGGL_VIEW_TYPE ?
+              (leaf.view as JugglView).juggl : null;
+          if (activeViz) {
             this.changeRef = activeViz.on('elementsChange', () => {
               view.onActiveVizChange();
             });

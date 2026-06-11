@@ -96,10 +96,15 @@ export default class JugglPlugin extends Plugin implements IJugglPlugin {
       this.addCommand({
         id: 'open-vis',
         name: 'Open local graph of note',
-        callback: () => {
+        checkCallback: (checking: boolean) => {
           const file = this.app.workspace.getActiveFile();
-          const name = file.name;
-          this.openLocalGraph(name);
+          if (!file) {
+            return false;
+          }
+          if (!checking) {
+            this.openLocalGraph(file.name);
+          }
+          return true;
         },
       });
       this.addCommand({
@@ -184,13 +189,17 @@ export default class JugglPlugin extends Plugin implements IJugglPlugin {
       const createNodesPane = function() {
         if (plugin.app.workspace.getLeavesOfType(JUGGL_NODES_VIEW_TYPE).length === 0) {
           const leaf = plugin.app.workspace.getRightLeaf(false);
-          leaf.setViewState({type: JUGGL_NODES_VIEW_TYPE});
-        }//
+          if (leaf) {
+            leaf.setViewState({type: JUGGL_NODES_VIEW_TYPE});
+          }
+        }
       };
       const createStylePane = function() {
         if (plugin.app.workspace.getLeavesOfType(JUGGL_STYLE_VIEW_TYPE).length === 0) {
           const leaf = plugin.app.workspace.getRightLeaf(false);
-          leaf.setViewState({type: JUGGL_STYLE_VIEW_TYPE});
+          if (leaf) {
+            leaf.setViewState({type: JUGGL_STYLE_VIEW_TYPE});
+          }
         }
       };
       this.app.workspace.onLayoutReady(createNodesPane);
@@ -223,16 +232,22 @@ export default class JugglPlugin extends Plugin implements IJugglPlugin {
 
 
       const sheetPath = STYLESHEET_PATH(this.vault);
-      // @ts-ignore
-      this.registerEvent(this.vault.on('raw', (file) => {
+      // The 'raw' vault event is undocumented; guard registration so a future
+      // Obsidian release removing it can't break plugin load.
+      try {
         // @ts-ignore
-        if (file === sheetPath) {
-          console.log(`Updating stylesheet from ${sheetPath}`);
-          for (const view of this.activeGraphs()) {
-            view.updateStylesheet().then();
+        this.registerEvent(this.vault.on('raw', (file) => {
+          // @ts-ignore
+          if (file === sheetPath) {
+            console.log(`Updating stylesheet from ${sheetPath}`);
+            for (const view of this.activeGraphs()) {
+              view.updateStylesheet().then();
+            }
           }
-        }
-      }));
+        }));
+      } catch (e) {
+        console.log('Juggl: could not register stylesheet watcher', e);
+      }
       this.setGlobalIcon();
       this.addChild(new ImageServer(this));
     }
@@ -271,7 +286,7 @@ export default class JugglPlugin extends Plugin implements IJugglPlugin {
     }
 
     async openLocalGraph(name: string) {
-      const leaf = this.app.workspace.splitActiveLeaf(this.settings.splitDirection);
+      const leaf = this.app.workspace.getLeaf('split', this.settings.splitDirection);
       // const query = this.localNeighborhoodCypher(name);
       const neovisView = new JugglView(leaf, this.settings.graphSettings, this, [name]);
       await leaf.open(neovisView);
@@ -296,16 +311,20 @@ export default class JugglPlugin extends Plugin implements IJugglPlugin {
 
     public activeGraphs(): IJuggl[] {
       // TODO: This is not a great method, no way to find back the inline graphs!
+      // Note: with deferred views (Obsidian 1.7.2+), a leaf's view may not be a
+      // JugglView instance yet, so filter instead of blindly casting.
       return this.app.workspace
           .getLeavesOfType(JUGGL_VIEW_TYPE)
-          .map((l) => (l.view as JugglView).juggl) as IJuggl[];
+          .map((l) => l.view)
+          .filter((v): v is JugglView => v instanceof JugglView)
+          .map((v) => v.juggl) as IJuggl[];
     }
 
     async onunload() {
       super.onunload();
       console.log('Unloading Juggl');
-      this.app.workspace.detachLeavesOfType(JUGGL_NODES_VIEW_TYPE);
-      this.app.workspace.detachLeavesOfType(JUGGL_STYLE_VIEW_TYPE);
+      // Don't detach leaves here: Obsidian handles cleanup itself, and detaching
+      // in onunload destroys the user's layout on every plugin update/reload.
       if (this.watcher) {
         this.watcher.close();
       }

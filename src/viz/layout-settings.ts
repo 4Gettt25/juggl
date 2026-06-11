@@ -198,16 +198,16 @@ export const getLayoutSetting = function(layoutType: AllLayouts, settings?: IJug
     case 'circle':
     case 'concentric': return new ConcentricLayout(options);
     case 'force-directed': if (settings && settings.fdgdLayout === 'd3-force') {
-      return new D3GlobalLayout(options, settings.animateLayout);
+      return new D3GlobalLayout(options, settings?.animateLayout ?? true);
     } else {
-      return new ColaGlobalLayout(options, settings.animateLayout);
+      return new ColaGlobalLayout(options, settings?.animateLayout ?? true);
     }
     case 'hierarchy':
     case 'dagre':
       return new DagreGlobalLayout(options);
     case 'grid': return new GridGlobalLayout(options);
-    case 'cola': return new ColaGlobalLayout(options, settings.animateLayout);
-    case 'd3-force': return new D3GlobalLayout(options, settings.animateLayout);
+    case 'cola': return new ColaGlobalLayout(options, settings?.animateLayout ?? true);
+    case 'd3-force': return new D3GlobalLayout(options, settings?.animateLayout ?? true);
   }
 };
 

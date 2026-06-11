@@ -119,7 +119,9 @@ export class GraphStyleSheet {
       const canvas = activeDocument.createElement('canvas');
       canvas.width = canvas.height = 1;
       const ctx = canvas.getContext('2d');
-
+      if (!ctx) {
+        return; // canvas unavailable, treat as invalid color
+      }
 
       ctx.clearRect(0, 0, 1, 1);
       // In order to detect invalid values,
