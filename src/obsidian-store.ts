@@ -98,7 +98,11 @@ export class ObsidianStore extends Component implements ICoreDataStore {
           let inlineEdge: EdgeDefinition = null;
           let countInline = 0;
           for (const edge of connectedEdges) {
-            if (edge.classes === ' inline') {
+            // classes is a space-separated string for inline edges (from
+            // parseRefCache) and an array for frontmatter edges.
+            const classes = typeof edge.classes === 'string' ?
+                edge.classes.split(' ') : (edge.classes ?? []);
+            if (classes.includes('inline')) {
               if (inlineEdge) {
                 inlineEdge.data.context += `
                 
