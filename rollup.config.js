@@ -34,6 +34,7 @@ plugins.push(copy({
   targets: [
     {src: 'main.js', dest: 'docs/.obsidian/plugins/juggl'},
     {src: 'styles.css', dest: 'docs/.obsidian/plugins/juggl'},
+    {src: 'manifest.json', dest: 'docs/.obsidian/plugins/juggl'},
   ],
   hook: 'writeBundle',
 }));
