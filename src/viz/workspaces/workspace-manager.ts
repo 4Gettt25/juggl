@@ -47,12 +47,14 @@ export class WorkspaceManager extends Component {
         const graph = JSON.parse(await this.adapter.read(folder + '/graph.json'));
         const settings = JSON.parse(await this.adapter.read( folder + '/settings.json'));
         viz.viz.json(graph);
-        viz.settings = settings;
+        // Merge over the current settings so keys added in newer plugin versions
+        // aren't lost when loading a workspace saved by an older version.
+        viz.settings = Object.assign({}, viz.settings, settings);
 
         // After loading in the graph, we have to validate with the datastores that the data is still up-to-date:
         // This could create race-condition conflicts possibly when a node updates in the meantime.
         const nodes = viz.viz.nodes();
-        for (let i=1; i < nodes.length; i++ ) {
+        for (let i=0; i < nodes.length; i++ ) {
           if (!nodes[i]) {
             continue;
           }
@@ -72,7 +74,7 @@ export class WorkspaceManager extends Component {
 
     async deleteGraph(name: string, view: Juggl) {
       try {
-        await this.adapter.rmdir(DATA_FOLDER + name, true);
+        await this.adapter.rmdir(DATA_FOLDER(view.vault) + name, true);
         this.graphs.remove(name);
       } catch (e) {
         console.log(e);

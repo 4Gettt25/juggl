@@ -25,7 +25,7 @@
 <div class="modal-content">
     <input class="list-item-part mod-extended" type="text" placeholder="Save current graph as..." bind:value={saveName}
     on:keydown={filterInput} />
-    <button class="list-item-part" on:click={_onSave(saveName)}>Save</button>
+    <button class="list-item-part" on:click={() => _onSave(saveName)}>Save</button>
 </div>
 <hr>
 <div>
