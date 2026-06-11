@@ -58,11 +58,13 @@ export class ImageServer extends Component {
           console.log(req);
           console.log(file);
         }
-        // if (file.indexOf(dir + path.sep) !== 0) {
-        //   res.statusCode = 403;
-        //   res.setHeader('Content-Type', 'text/plain');
-        //   return res.end('Forbidden');
-        // }
+        // Prevent path traversal outside the vault.
+        const vaultRoot = (vault.adapter as FileSystemAdapter).getFullPath(dir);
+        if (!path.resolve(file).startsWith(path.resolve(vaultRoot))) {
+          res.statusCode = 403;
+          res.setHeader('Content-Type', 'text/plain');
+          return res.end('Forbidden');
+        }
         // @ts-ignore
         const type = mime[path.extname(file).slice(1)];
         const s = fs.createReadStream(file);
@@ -80,7 +82,9 @@ export class ImageServer extends Component {
       });
       try {
         const port = this.settings.imgServerPort;
-        this.imgServer.listen(port, function() {
+        // Bind to localhost only; this serves vault files and must not be
+        // reachable from the network.
+        this.imgServer.listen(port, '127.0.0.1', function() {
           console.log('Image server listening on http://localhost:' + port + '/');
         });
       } catch (e) {
