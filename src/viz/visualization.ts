@@ -419,21 +419,27 @@ export class Juggl extends Component implements IJuggl {
       if (batch) {
         this.viz.startBatch();
       }
-      toExpand.addClass(CLASS_EXPANDED);
-      toExpand.addClass(CLASS_PROTECTED);
-      // Currently returns the edges merged into the graph, not the full neighborhood
-      const expandedIds = toExpand.map((n) => VizId.fromNode(n));
-      const neighbourhood = await this.neighbourhood(expandedIds);
-      this.mergeToGraph(neighbourhood, false, false);
-      const nodes = this.viz.collection();
-      neighbourhood.forEach((n) => {
-        nodes.merge(this.viz.$id(n.data.id) as NodeSingular);
-      });
+      // An exception while a batch is open permanently stops the renderer from
+      // updating ("frozen" graph), so always close the batch.
+      let edgesInGraph: IMergedToGraph;
+      try {
+        toExpand.addClass(CLASS_EXPANDED);
+        toExpand.addClass(CLASS_PROTECTED);
+        // Currently returns the edges merged into the graph, not the full neighborhood
+        const expandedIds = toExpand.map((n) => VizId.fromNode(n));
+        const neighbourhood = await this.neighbourhood(expandedIds);
+        this.mergeToGraph(neighbourhood, false, false);
+        const nodes = this.viz.collection();
+        neighbourhood.forEach((n) => {
+          nodes.merge(this.viz.$id(n.data.id) as NodeSingular);
+        });
 
-      const edges = await this.buildEdges(nodes);
-      const edgesInGraph = this.mergeToGraph(edges, false, triggerGraphChanged);
-      if (batch) {
-        this.viz.endBatch();
+        const edges = await this.buildEdges(nodes);
+        edgesInGraph = this.mergeToGraph(edges, false, triggerGraphChanged);
+      } finally {
+        if (batch) {
+          this.viz.endBatch();
+        }
       }
       this.trigger('expand', toExpand);
       return edgesInGraph;
@@ -516,32 +522,36 @@ export class Juggl extends Component implements IJuggl {
       }
       const addElements: ElementDefinition[] = [];
       const mergedCollection = this.viz.collection();
-      elements.forEach((n) => {
-        if (this.viz.$id(n.data.id).length === 0) {
-          addElements.push(n);
-        } else {
-          const gElement = this.viz.$id(n.data.id);
-          const extraClasses = CLASSES.filter((clazz) => gElement.hasClass(clazz));
+      let addCollection: Collection;
+      try {
+        elements.forEach((n) => {
+          if (this.viz.$id(n.data.id).length === 0) {
+            addElements.push(n);
+          } else {
+            const gElement = this.viz.$id(n.data.id);
+            const extraClasses = CLASSES.filter((clazz) => gElement.hasClass(clazz));
 
-          // @ts-ignore
-          extraClasses.push(...gElement.classes().filter((el: string) => el.startsWith('global-') || el.startsWith('local-')));
+            // @ts-ignore
+            extraClasses.push(...gElement.classes().filter((el: string) => el.startsWith('global-') || el.startsWith('local-')));
 
-          // TODO: Maybe make an event here
-          gElement.classes(n.classes);
-          for (const clazz of extraClasses) {
-            gElement.addClass(clazz);
+            // TODO: Maybe make an event here
+            gElement.classes(n.classes);
+            for (const clazz of extraClasses) {
+              gElement.addClass(clazz);
+            }
+            gElement.data(n.data);
+            mergedCollection.merge(gElement);
           }
-          gElement.data(n.data);
-          mergedCollection.merge(gElement);
+        });
+        addCollection = this.viz.add(addElements);
+        mergedCollection.merge(addCollection);
+        if (triggerGraphChanged) {
+          this.onGraphChanged(false);
         }
-      });
-      const addCollection = this.viz.add(addElements);
-      mergedCollection.merge(addCollection);
-      if (triggerGraphChanged) {
-        this.onGraphChanged(false);
-      }
-      if (batch) {
-        this.viz.endBatch();
+      } finally {
+        if (batch) {
+          this.viz.endBatch();
+        }
       }
       return {merged: mergedCollection, added: addCollection};
     }
@@ -567,16 +577,20 @@ export class Juggl extends Component implements IJuggl {
       if (batch) {
         this.viz.startBatch();
       }
-      this.viz.nodes().forEach((node) => {
-        node.data('degree', node.degree(false));
-        node.data('nameLength', node.data('name').length);
-        node.addClass([...new Set(node.incomers('edge')
-            .map((edge) => 'has-incoming-' + (edge.data('type') ? edge.data('type') : 'inline')))]);
-        node.addClass([...new Set(node.outgoers('edge')
-            .map((edge) => 'has-outgoing-' + (edge.data('type') ? edge.data('type') : 'inline')))]);
-      });
-      if (batch) {
-        this.viz.endBatch();
+      try {
+        this.viz.nodes().forEach((node) => {
+          node.data('degree', node.degree(false));
+          // Placeholder and dangling nodes can lack a name.
+          node.data('nameLength', (node.data('name') ?? '').length);
+          node.addClass([...new Set(node.incomers('edge')
+              .map((edge) => 'has-incoming-' + (edge.data('type') ? edge.data('type') : 'inline')))]);
+          node.addClass([...new Set(node.outgoers('edge')
+              .map((edge) => 'has-outgoing-' + (edge.data('type') ? edge.data('type') : 'inline')))]);
+        });
+      } finally {
+        if (batch) {
+          this.viz.endBatch();
+        }
       }
 
       this.trigger('elementsChange');

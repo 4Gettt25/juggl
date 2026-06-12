@@ -184,13 +184,22 @@ export class WorkspaceMode extends Component implements IAGMode {
         let followImmediate = true;
         if (this.viz.$id(id.toId()).length === 0) {
           const node = await this.view.datastores.coreStore.get(id, this.view);
+          if (!node) {
+            // Metadata cache not ready yet (e.g. newly created file).
+            return;
+          }
           this.viz.startBatch();
-          // Make sure it doesn't immediately get removed
-          this.viz.add(node).addClass(CLASS_PROTECTED);
-          const edges = await this.view.buildEdges(this.viz.$id(id.toId()));
-          this.viz.add(edges);
-          this.view.onGraphChanged(false, true);
-          this.viz.endBatch();
+          // An exception while a batch is open permanently freezes the
+          // renderer, so always close the batch.
+          try {
+            // Make sure it doesn't immediately get removed
+            this.viz.add(node).addClass(CLASS_PROTECTED);
+            const edges = await this.view.buildEdges(this.viz.$id(id.toId()));
+            this.viz.add(edges);
+            this.view.onGraphChanged(false, true);
+          } finally {
+            this.viz.endBatch();
+          }
           followImmediate = false;
         }
         const node = this.viz.$id(id.toId()) as NodeSingular;

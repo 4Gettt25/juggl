@@ -15,7 +15,7 @@ import type {
     EdgeDefinition,
     NodeCollection, EdgeDataDefinition,
 } from 'cytoscape';
-import {CLASS_EXPANDED} from './constants';
+import {CLASS_EXPANDED, CLASSES} from './constants';
 import {nodeDangling, nodeFromFile, parseRefCache, VizId} from 'juggl-api';
 
 export const OBSIDIAN_STORE_NAME = 'Obsidian';
@@ -25,6 +25,7 @@ export class ObsidianStore extends Component implements ICoreDataStore {
     events: DataStoreEvents;
     metadata: MetadataCache;
     vault: Vault
+    private refreshQueue: Promise<void> = Promise.resolve();
     constructor(plugin: JugglPlugin) {
       super();
       this.plugin = plugin;
@@ -267,19 +268,46 @@ ${edge.data.context}`;
       return Promise.resolve(nodeFromFile(file, this.plugin, view.settings));
     }
 
+    // Serializes vault-event work: concurrent refreshNode calls interleave and
+    // each ends by removing edges absent from its own result, deleting edges a
+    // parallel refresh just added. Also keeps one failure from going unhandled.
+    enqueue(task: () => Promise<void>): Promise<void> {
+      this.refreshQueue = this.refreshQueue.then(task).catch((e) => {
+        console.error('Juggl: error while updating graph from vault event', e);
+      });
+      return this.refreshQueue;
+    }
+
+    // Obsidian re-indexes metadata asynchronously after rename/create, so the
+    // cache can lag behind the vault event.
+    async waitForCache(file: TFile, timeoutMs = 4000): Promise<boolean> {
+      if (file.extension !== 'md') {
+        return true;
+      }
+      const start = Date.now();
+      while (this.metadata.getFileCache(file) === null) {
+        if (Date.now() - start > timeoutMs) {
+          return false;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      return true;
+    }
+
     async refreshNode(id: VizId, view: IJuggl) {
       const idS = id.toId();
       let correctEdges: IMergedToGraph;
       let node = view.viz.$id(idS);
       if (this.getFile(id) === null) {
         // File does not exist
-        if (node) {
+        if (node.length > 0) {
           // If a node exists for this file, remove it.
           node.remove();
           view.onGraphChanged(true, true);
         }
         return;
       }
+      const wasInGraph = node.length > 0;
       if (node.length > 0 && node.hasClass(CLASS_EXPANDED)) {
         correctEdges = await view.expand(node, true, false);
       } else {
@@ -297,7 +325,9 @@ ${edge.data.context}`;
       const removed = node.connectedEdges()
           .difference(correctEdges.merged)
           .remove();
-      if (removed.length > 0 || correctEdges.added.length > 0) {
+      // Also trigger when the node itself was just added, so it gets laid out
+      // (and pruned again by workspace mode if it is unconnected).
+      if (removed.length > 0 || correctEdges.added.length > 0 || !wasInGraph) {
         view.onGraphChanged(true, true);
       }
     }
@@ -307,30 +337,70 @@ ${edge.data.context}`;
       const store = this;
       this.registerEvent(
           this.metadata.on('changed', (file) => {
-            store.plugin.activeGraphs().forEach(async (v) => {
-              await store.refreshNode(VizId.fromFile(file), v);
+            store.enqueue(async () => {
+              for (const v of store.plugin.activeGraphs()) {
+                await store.refreshNode(VizId.fromFile(file), v);
+              }
             });
           }));
       this.registerEvent(
           this.vault.on('rename', (file, oldPath) => {
             if (file instanceof TFile) {
               const id = VizId.fromFile(file);
-              const oldId = VizId.fromPath(oldPath);
-              store.plugin.activeGraphs().forEach(async (v) => {
-                setTimeout(async ()=> {
-                  // Changing the ID of a node in Cytoscape is not allowed, so remove and then restore.
-                  // Put in setTimeout because Obsidian doesn't immediately update the metadata on rename...
-                  v.viz.$id(oldId.toId()).remove();
+              // Note: VizId.fromPath is declared in juggl-api's index.d.ts but
+              // missing from its dist bundle, so derive the old id manually.
+              const oldName = oldPath.split('/').pop();
+              const oldId = new VizId(oldName, store.storeId());
+              store.enqueue(async () => {
+                await store.waitForCache(file);
+                for (const v of store.plugin.activeGraphs()) {
+                  if (oldId.toId() === id.toId()) {
+                    // Only the folder changed; the id (file name) is the same,
+                    // so refresh in place to pick up the new path.
+                    await store.refreshNode(id, v);
+                    continue;
+                  }
+                  const oldNode = v.viz.$id(oldId.toId());
+                  if (oldNode.length === 0) {
+                    continue;
+                  }
+                  // Changing the ID of a node in Cytoscape is not allowed, so
+                  // remove it and re-create it, carrying over position and
+                  // state classes (expanded, pinned, active, ...).
+                  const position = {...oldNode.position()};
+                  const classes = CLASSES.filter((c) => oldNode.hasClass(c));
+                  const locked = oldNode.locked();
+                  oldNode.remove();
+                  const nodeDef = await store.get(id, v);
+                  if (nodeDef) {
+                    v.mergeToGraph([nodeDef], true, false);
+                    const newNode = v.viz.$id(id.toId());
+                    newNode.position(position);
+                    for (const clazz of classes) {
+                      newNode.addClass(clazz);
+                    }
+                    if (locked) {
+                      newNode.lock();
+                    }
+                  }
+                  // Rebuilds edges; re-expands if the old node was expanded.
                   await store.refreshNode(id, v);
-                }, 500);
+                  v.onGraphChanged(true, true);
+                }
               });
             }
           }));
       this.registerEvent(
           this.vault.on('delete', (file) => {
             if (file instanceof TFile) {
-              store.plugin.activeGraphs().forEach((v) => {
-                v.viz.$id(VizId.fromFile(file).toId()).remove();
+              store.enqueue(async () => {
+                for (const v of store.plugin.activeGraphs()) {
+                  const node = v.viz.$id(VizId.fromFile(file).toId());
+                  if (node.length > 0) {
+                    node.remove();
+                    v.onGraphChanged(true, true);
+                  }
+                }
               });
             }
           }));

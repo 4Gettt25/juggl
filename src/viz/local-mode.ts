@@ -32,6 +32,7 @@ export class LocalMode extends Component implements IAGMode {
     toolbar: SvelteComponent;
     depth: number = 1;
     maxDepthForCurrentFile: number = 1;
+    private openQueue: Promise<void> = Promise.resolve();
 
     constructor(view: Juggl) {
       super();
@@ -70,23 +71,41 @@ export class LocalMode extends Component implements IAGMode {
       if (!this.view.settings.autoAddNodes) {
         return;
       }
+      // Serialize: interleaved handlers prune each other's freshly added
+      // neighbourhoods, leaving a partial graph.
+      this.openQueue = this.openQueue
+          .then(() => this.rebuildForFile(file))
+          .catch((e) => console.error('Juggl: failed to update local graph', e));
+      return this.openQueue;
+    }
+
+    private async rebuildForFile(file: TFile) {
       const id = new VizId(file.name, 'core');
       let node: NodeSingular;
       this.viz.startBatch();
-      if (this.viz.$id(id.toId()).length === 0) {
-        const nodeDef = await this.view.datastores.coreStore.get(id, this.view);
-        node = this.viz.add(nodeDef);
-      } else {
-        node = this.viz.$id(id.toId());
+      // An exception while a batch is open permanently freezes the renderer,
+      // so always close the batch.
+      try {
+        if (this.viz.$id(id.toId()).length === 0) {
+          const nodeDef = await this.view.datastores.coreStore.get(id, this.view);
+          if (!nodeDef) {
+            // Metadata cache not ready yet (e.g. newly created file).
+            return;
+          }
+          node = this.viz.add(nodeDef);
+        } else {
+          node = this.viz.$id(id.toId());
+        }
+        await this.view.expand(node, false);
+        node.addClass(CLASS_ACTIVE_NODE);
+        this.viz.nodes()
+            .difference(node.closedNeighborhood())
+            .remove();
+        this.view.onGraphChanged(false);
+        this.updateActiveFile(node as NodeSingular);
+      } finally {
+        this.viz.endBatch();
       }
-      await this.view.expand(node, false);
-      node.addClass(CLASS_ACTIVE_NODE);
-      this.viz.nodes()
-          .difference(node.closedNeighborhood())
-          .remove();
-      this.view.onGraphChanged(false);
-      this.updateActiveFile(node as NodeSingular);
-      this.viz.endBatch();
     }
 
     changeDepth(depth: number) {
